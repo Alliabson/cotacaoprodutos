@@ -177,7 +177,7 @@ def buscar_cepea(endpoint, data_inicial, data_final):
     
     except Exception as e:
         st.warning(f"⚠️ Dados reais do CEPEA temporariamente indisponíveis. Mostrando dados simulados para referência. (Erro: {str(e)})")
-        return gerar_dados_realistas(data_inicial, data_final, endpoint)
+        return gerar_dados_exemplo(data_inicial, data_final, endpoint)
 
 # Função para buscar dados do IPEAData com cache e tratamento melhorado
 @lru_cache(maxsize=32)

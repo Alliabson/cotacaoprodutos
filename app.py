@@ -5,6 +5,25 @@ from datetime import datetime, timedelta
 import json
 import random
 
+# Configuração robusta do locale
+def configure_locale():
+    try:
+        locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
+    except locale.Error:
+        try:
+            locale.setlocale(locale.LC_ALL, 'pt_BR')
+        except locale.Error:
+            try:
+                locale.setlocale(locale.LC_ALL, 'Portuguese_Brazil.1252')
+            except locale.Error:
+                try:
+                    locale.setlocale(locale.LC_ALL, '')
+                except locale.Error:
+                    locale.setlocale(locale.LC_ALL, 'C.UTF-8')
+                    st.warning("Configuração de locale específica não disponível. Usando padrão internacional.")
+
+configure_locale()
+
 # Configuração da página
 st.set_page_config(
     page_title="Cotações Agropecuárias - Dados Oficiais",
@@ -50,17 +69,19 @@ with st.sidebar:
         list(API_PRODUTOS[fonte_selecionada].keys())
     )
     
-    # Novo seletor de datas com calendário
+    # Novo seletor de datas com calendário em português
     data_final = st.date_input(
         "Data final",
         value=datetime.now(),
-        max_value=datetime.now()
+        max_value=datetime.now(),
+        format="DD/MM/YYYY"
     )
     
     data_inicial = st.date_input(
         "Data inicial",
         value=datetime.now() - timedelta(days=30),
-        max_value=datetime.now()
+        max_value=datetime.now(),
+        format="DD/MM/YYYY"
     )
     
     # Garante que a data inicial seja menor que a final

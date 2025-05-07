@@ -5,8 +5,10 @@ from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 import json
 import re
+import os
 from functools import lru_cache
 import time
+import numpy as np
 
 # Configuração da página
 st.set_page_config(
@@ -19,54 +21,54 @@ st.set_page_config(
 st.title("🌱 Cotações Agropecuárias Oficiais")
 st.markdown("Dados em tempo real das principais fontes governamentais")
 
-# Dicionário de APIs e produtos atualizado
-API_PRODUTOS = {
+# Dicionário de produtos atualizado
+PRODUTOS = {
     "CEPEA": {
-        "Boi Gordo": {"endpoint": "boi", "unidade": "R$/@", "fonte": "CEPEA/ESALQ"},
-        "Milho": {"endpoint": "milho", "unidade": "R$/sc60kg", "fonte": "CEPEA/ESALQ"},
-        "Soja": {"endpoint": "soja", "unidade": "R$/sc60kg", "fonte": "CEPEA/ESALQ"}
+        "Boi Gordo": {"codigo": "boi", "unidade": "R$/@", "fonte": "CEPEA/ESALQ"},
+        "Milho": {"codigo": "milho", "unidade": "R$/sc60kg", "fonte": "CEPEA/ESALQ"},
+        "Soja": {"codigo": "soja", "unidade": "R$/sc60kg", "fonte": "CEPEA/ESALQ"}
     },
-    "IPEAData": {
-        "Soja (Paraná)": {"codigo": "PPM12_SOJA12", "unidade": "US$/sc60kg", "fonte": "IPEAData"},
-        "Café Arábica": {"codigo": "PPM12_CAFE12", "unidade": "US$/sc60kg", "fonte": "IPEAData"}
-    },
-    "Banco Central": {
-        "Café Arábica (BCB)": {"codigo": "7461", "unidade": "US$/sc60kg", "fonte": "BCB"},
-        "Boi Gordo (BCB)": {"codigo": "1", "unidade": "R$/@", "fonte": "BCB"}
+    "CONAB": {
+        "Preço Médio Soja (Paraná)": {"codigo": "soja-parana", "unidade": "R$/sc60kg", "fonte": "CONAB"},
+        "Preço Médio Milho (MG)": {"codigo": "milho-mg", "unidade": "R$/sc60kg", "fonte": "CONAB"}
     }
 }
 
-# Sidebar com seleção de datas
+# Sidebar com seleção de dados
 with st.sidebar:
     st.header("Filtros")
     
     fonte_selecionada = st.selectbox(
         "Selecione a fonte",
-        list(API_PRODUTOS.keys())
-    )
+        list(PRODUTOS.keys())
     
     produto_selecionado = st.selectbox(
         "Selecione o produto",
-        list(API_PRODUTOS[fonte_selecionada].keys())
-    )
+        list(PRODUTOS[fonte_selecionada].keys()))
     
     data_final = st.date_input(
         "Data final",
         value=datetime.now(),
         max_value=datetime.now(),
-        format="DD/MM/YYYY"
-    )
+        format="DD/MM/YYYY")
     
     data_inicial = st.date_input(
         "Data inicial",
         value=datetime.now() - timedelta(days=30),
         max_value=datetime.now(),
-        format="DD/MM/YYYY"
-    )
+        format="DD/MM/YYYY")
     
     if data_inicial > data_final:
         st.error("A data inicial deve ser anterior à data final")
         st.stop()
+
+    # Opção para upload de arquivo com dados oficiais
+    st.markdown("---")
+    st.subheader("Opção alternativa")
+    arquivo_dados = st.file_uploader(
+        "Ou envie arquivo com dados oficiais (CSV/Excel)",
+        type=["csv", "xlsx"],
+        help="Formato esperado: colunas 'data' (DD/MM/AAAA) e 'preco' (valores numéricos)")
 
 # Função para verificar dados
 def verificar_dados(df, produto):
@@ -75,10 +77,8 @@ def verificar_dados(df, produto):
         "Boi Gordo": (200, 350),
         "Milho": (50, 120),
         "Soja": (100, 200),
-        "Café Arábica": (800, 1500),
-        "Soja (Paraná)": (120, 200),
-        "Boi Gordo (BCB)": (200, 350),
-        "Café Arábica (BCB)": (800, 1500)
+        "Preço Médio Soja (Paraná)": (100, 200),
+        "Preço Médio Milho (MG)": (50, 120)
     }
     
     if produto in faixas:
@@ -88,199 +88,198 @@ def verificar_dados(df, produto):
             return False
     return True
 
-# Função para buscar dados do CEPEA corrigida
-@lru_cache(maxsize=32)
-def buscar_cepea(endpoint, data_inicial, data_final):
-    """Busca dados reais do CEPEA com scraping atualizado"""
-    try:
-        url = f"https://www.cepea.esalq.usp.br/br/indicador/{endpoint}.aspx"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Encontrando os dados na nova estrutura do CEPEA
-        script_tag = soup.find('script', string=re.compile('var dados = '))
-        if not script_tag:
-            raise Exception("Dados não encontrados no HTML")
-        
-        # Extraindo os dados do JavaScript
-        script_text = script_tag.string
-        dados_str = re.search(r'var dados = (\[.*?\])', script_text).group(1)
-        dados = json.loads(dados_str)
-        
-        # Processando os dados
-        registros = []
-        for item in dados:
-            data = datetime.strptime(item['data'], '%d/%m/%Y').date()
-            if data_inicial <= data <= data_final:
-                preco = float(item['valor'].replace('.', '').replace(',', '.'))
-                registros.append({'data': data, 'preco': preco})
-        
-        if not registros:
-            raise Exception("Nenhum dado no período selecionado")
-        
-        df = pd.DataFrame(registros)
-        df['data'] = pd.to_datetime(df['data'])
-        
-        return df.sort_values('data')
+# Função para buscar dados do CEPEA com tratamento robusto
+@st.cache_data(ttl=3600, show_spinner="Buscando dados do CEPEA...")
+def buscar_cepea(codigo, data_inicial, data_final):
+    """Busca dados reais do CEPEA com múltiplas tentativas"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
     
-    except Exception as e:
-        st.error(f"Erro ao buscar dados do CEPEA: {str(e)}")
-        return None
+    for tentativa in range(3):  # 3 tentativas
+        try:
+            url = f"https://www.cepea.esalq.usp.br/br/indicador/{codigo}.aspx"
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Tentativa 1: Extrair do JavaScript
+            script_tag = soup.find('script', string=re.compile('var dados = '))
+            if script_tag:
+                script_text = script_tag.string
+                match = re.search(r'var dados = (\[.*?\])', script_text)
+                if match:
+                    dados_str = match.group(1)
+                    dados = json.loads(dados_str)
+                    
+                    registros = []
+                    for item in dados:
+                        try:
+                            data = datetime.strptime(item['data'], '%d/%m/%Y').date()
+                            preco = float(item['valor'].replace('.', '').replace(',', '.'))
+                            if data_inicial <= data <= data_final:
+                                registros.append({'data': data, 'preco': preco})
+                        except (ValueError, KeyError):
+                            continue
+                    
+                    if registros:
+                        df = pd.DataFrame(registros)
+                        df['data'] = pd.to_datetime(df['data'])
+                        return df.sort_values('data')
 
-# Função para buscar IPEAData atualizada
-@lru_cache(maxsize=32)
-def buscar_ipeadata(codigo, data_inicial, data_final):
-    """Busca dados do IPEAData com nova API"""
-    try:
-        url = f"https://www.ipeadata.gov.br/api/odata4/ValoresSerie(SERCODIGO='{codigo}')"
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        
-        dados = response.json()
-        df = pd.DataFrame(dados.get('value', []))
-        
-        if df.empty:
-            raise Exception("Nenhum dado retornado")
-        
-        df = df.rename(columns={'VALDATA': 'data', 'VALVALOR': 'preco'})
-        df['data'] = pd.to_datetime(df['data'])
-        df['preco'] = pd.to_numeric(df['preco'])
-        
-        df = df[(df['data'] >= pd.to_datetime(data_inicial)) & 
-                (df['data'] <= pd.to_datetime(data_final))]
-        
-        if df.empty:
-            raise Exception("Nenhum dado no período")
-        
-        return df.sort_values('data')
-    
-    except Exception as e:
-        st.error(f"Erro ao buscar IPEAData: {str(e)}")
-        return None
+            # Tentativa 2: Extrair da tabela HTML
+            tabela = soup.find('table', {'class': 'tb_dados'})
+            if tabela:
+                linhas = tabela.find_all('tr')
+                registros = []
+                
+                for linha in linhas[1:]:  # Pular cabeçalho
+                    cols = linha.find_all('td')
+                    if len(cols) >= 2:
+                        try:
+                            data = datetime.strptime(cols[0].get_text(strip=True), '%d/%m/%Y').date()
+                            valor = cols[1].get_text(strip=True).replace('.', '').replace(',', '.')
+                            preco = float(valor)
+                            
+                            if data_inicial <= data <= data_final:
+                                registros.append({'data': data, 'preco': preco})
+                        except (ValueError, AttributeError):
+                            continue
+                
+                if registros:
+                    df = pd.DataFrame(registros)
+                    df['data'] = pd.to_datetime(df['data'])
+                    return df.sort_values('data')
 
-# Função para buscar BCB com verificação
-@lru_cache(maxsize=32)
-def buscar_bcb(codigo, data_inicial, data_final):
-    """Busca dados do BCB com verificação"""
+            raise Exception("Dados não encontrados na página")
+
+        except requests.exceptions.RequestException as e:
+            if tentativa == 2:  # Última tentativa
+                st.error(f"Falha ao acessar o CEPEA após 3 tentativas. Erro: {str(e)}")
+                return None
+            time.sleep(2)  # Espera antes de tentar novamente
+            continue
+            
+        except Exception as e:
+            st.error(f"Erro ao processar dados do CEPEA: {str(e)}")
+            return None
+
+    return None
+
+# Função para carregar dados de arquivo
+def carregar_arquivo(arquivo):
+    """Carrega dados de arquivo CSV ou Excel"""
     try:
-        url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados"
-        params = {
-            'formato': 'json',
-            'dataInicial': data_inicial.strftime('%d/%m/%Y'),
-            'dataFinal': data_final.strftime('%d/%m/%Y')
-        }
+        if arquivo.name.endswith('.csv'):
+            df = pd.read_csv(arquivo)
+        else:
+            df = pd.read_excel(arquivo)
         
-        response = requests.get(url, params=params, timeout=15)
-        response.raise_for_status()
+        # Verifica colunas necessárias
+        if 'data' not in df.columns or 'preco' not in df.columns:
+            st.error("Arquivo deve conter colunas 'data' e 'preco'")
+            return None
         
-        dados = response.json()
-        df = pd.DataFrame(dados)
-        
-        if df.empty:
-            raise Exception("Nenhum dado retornado")
-        
-        df = df.rename(columns={'data': 'data', 'valor': 'preco'})
+        # Converte datas
         df['data'] = pd.to_datetime(df['data'], dayfirst=True)
-        df['preco'] = pd.to_numeric(df['preco'])
+        df['preco'] = pd.to_numeric(df['preco'], errors='coerce')
+        df = df.dropna(subset=['data', 'preco'])
         
-        df = df[(df['data'] >= pd.to_datetime(data_inicial)) & 
-                (df['data'] <= pd.to_datetime(data_final))]
-        
-        if df.empty:
-            raise Exception("Nenhum dado no período")
-        
-        return df.sort_values('data')
+        return df
     
     except Exception as e:
-        st.error(f"Erro ao buscar BCB: {str(e)}")
+        st.error(f"Erro ao ler arquivo: {str(e)}")
         return None
 
 # Interface principal
 def main():
-    produto_info = API_PRODUTOS[fonte_selecionada][produto_selecionado]
+    produto_info = PRODUTOS[fonte_selecionada][produto_selecionado]
     
     st.header(f"{produto_selecionado} ({produto_info['unidade']})")
     st.caption(f"Fonte: {produto_info['fonte']} | Período: {data_inicial.strftime('%d/%m/%Y')} a {data_final.strftime('%d/%m/%Y')}")
     
-    with st.spinner("Buscando dados..."):
-        try:
-            # Busca dados conforme a fonte selecionada
+    # Verifica se há arquivo para upload
+    if arquivo_dados is not None:
+        df = carregar_arquivo(arquivo_dados)
+        fonte = "Arquivo enviado pelo usuário"
+    else:
+        with st.spinner(f"Buscando dados de {produto_selecionado}..."):
             if fonte_selecionada == "CEPEA":
-                df = buscar_cepea(produto_info['endpoint'], data_inicial, data_final)
-            elif fonte_selecionada == "IPEAData":
-                df = buscar_ipeadata(produto_info['codigo'], data_inicial, data_final)
-            elif fonte_selecionada == "Banco Central":
-                df = buscar_bcb(produto_info['codigo'], data_inicial, data_final)
-            
-            # Se não conseguir dados reais, mostra mensagem clara
-            if df is None or df.empty:
-                st.error("Não foi possível obter dados reais para este produto/período.")
-                st.info("Tente ajustar as datas ou selecionar outro produto.")
-                return
-            
-            # Verifica se os dados estão dentro de faixas razoáveis
-            if not verificar_dados(df, produto_selecionado):
-                st.warning("Os valores podem não estar atualizados. Verifique a fonte oficial.")
-            
-            # Exibição dos resultados
-            ultimo = df.iloc[-1]
-            cols = st.columns(3)
-            
-            # Formatação do valor conforme a unidade
-            valor_formatado = (f"R$ {ultimo['preco']:,.2f}" if "R$" in produto_info['unidade'] 
-                             else f"US$ {ultimo['preco']:,.2f}")
-            
-            cols[0].metric("Último Preço", valor_formatado)
-            cols[1].metric("Data", ultimo['data'].strftime("%d/%m/%Y"))
-            
-            if len(df) > 1:
-                variacao = ((ultimo['preco'] - df.iloc[-2]['preco']) / df.iloc[-2]['preco']) * 100
-                cols[2].metric("Variação", f"{variacao:.2f}%", delta=f"{variacao:.2f}%")
-            
-            # Gráfico com formatação melhorada
-            st.subheader("Evolução de Preços")
-            st.line_chart(df.set_index('data')['preco'])
-            
-            # Tabela com dados formatados
-            st.subheader("Histórico Completo")
-            df_display = df.copy()
-            df_display['data'] = df_display['data'].dt.strftime('%d/%m/%Y')
-            df_display['preco'] = df_display['preco'].apply(
-                lambda x: f"R$ {x:,.2f}" if "R$" in produto_info['unidade'] else f"US$ {x:,.2f}")
-            
-            st.dataframe(
-                df_display.sort_values('data', ascending=False),
-                use_container_width=True,
-                height=400,
-                hide_index=True
-            )
-            
-            # Botão de download
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                "Download CSV",
-                csv,
-                f"cotacao_{produto_selecionado.replace(' ', '_')}.csv",
-                "text/csv",
-                key='download-csv'
-            )
-            
-            # Link para fonte oficial
-            if fonte_selecionada == "CEPEA":
-                st.markdown(f"[Ver no site do CEPEA](https://www.cepea.esalq.usp.br/br/indicador/{produto_info['endpoint']}.aspx)")
-            elif fonte_selecionada == "IPEAData":
-                st.markdown(f"[Ver no IPEAData](http://www.ipeadata.gov.br/Default.aspx)")
-            elif fonte_selecionada == "Banco Central":
-                st.markdown(f"[Ver no BCB](https://www.bcb.gov.br/)")
-            
-        except Exception as e:
-            st.error(f"Erro inesperado: {str(e)}")
+                df = buscar_cepea(produto_info['codigo'], data_inicial, data_final)
+                fonte = produto_info['fonte']
+            else:
+                st.warning("Fonte selecionada requer upload de arquivo com dados oficiais")
+                df = None
+    
+    if df is None or df.empty:
+        st.error("Não foi possível obter dados para este produto/período.")
+        st.info("Sugestões:")
+        st.info("1. Tente ajustar as datas")
+        st.info("2. Verifique se o produto está disponível no site oficial")
+        st.info("3. Use a opção de enviar arquivo com dados oficiais")
+        return
+    
+    # Verificação de qualidade dos dados
+    if not verificar_dados(df, produto_selecionado):
+        st.warning("Os valores podem não estar atualizados ou corretos. Verifique a fonte oficial.")
+    
+    # Processamento dos dados
+    df = df[(df['data'] >= pd.to_datetime(data_inicial)) & 
+            (df['data'] <= pd.to_datetime(data_final))]
+    df = df.sort_values('data')
+    
+    # Exibição dos resultados
+    ultimo = df.iloc[-1]
+    cols = st.columns(3)
+    
+    # Formatação do valor
+    valor_formatado = f"R$ {ultimo['preco']:,.2f}" if "R$" in produto_info['unidade'] else f"US$ {ultimo['preco']:,.2f}"
+    cols[0].metric("Último Preço", valor_formatado)
+    cols[1].metric("Data", ultimo['data'].strftime("%d/%m/%Y"))
+    
+    if len(df) > 1:
+        variacao = ((ultimo['preco'] - df.iloc[-2]['preco']) / df.iloc[-2]['preco']) * 100
+        cols[2].metric("Variação", f"{variacao:.2f}%", delta=f"{variacao:.2f}%")
+    
+    # Gráfico
+    st.subheader("Evolução de Preços")
+    st.line_chart(df.set_index('data')['preco'])
+    
+    # Tabela com dados
+    st.subheader("Histórico Completo")
+    df_display = df.copy()
+    df_display['data'] = df_display['data'].dt.strftime('%d/%m/%Y')
+    df_display['preco'] = df_display['preco'].apply(
+        lambda x: f"R$ {x:,.2f}" if "R$" in produto_info['unidade'] else f"US$ {x:,.2f}")
+    
+    st.dataframe(
+        df_display.sort_values('data', ascending=False),
+        use_container_width=True,
+        height=400,
+        hide_index=True
+    )
+    
+    # Botões de ação
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Botão de download
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            "Download CSV",
+            csv,
+            f"cotacao_{produto_selecionado.replace(' ', '_')}.csv",
+            "text/csv",
+            key='download-csv'
+        )
+    
+    with col2:
+        # Link para fonte oficial
+        if fonte_selecionada == "CEPEA":
+            st.markdown(f"[🔍 Ver no site do CEPEA](https://www.cepea.esalq.usp.br/br/indicador/{produto_info['codigo']}.aspx)")
+        elif fonte_selecionada == "CONAB":
+            st.markdown(f"[🔍 Ver no site da CONAB](https://www.conab.gov.br/)")
 
 if __name__ == "__main__":
     main()

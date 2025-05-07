@@ -112,9 +112,9 @@ def gerar_dados_exemplo(data_inicial, data_final, produto):
 # Função para buscar dados do CEPEA com web scraping atualizado
 @lru_cache(maxsize=32)
 def buscar_cepea(endpoint, data_inicial, data_final):
-    """Busca dados do CEPEA com web scraping atualizado para o novo site"""
+    """Busca dados do CEPEA usando a API oficial"""
     try:
-        # Novo endpoint da API do CEPEA (descoberto através de inspeção)
+        # Nova URL da API do CEPEA
         url = f"https://www.cepea.esalq.usp.br/br/consulta-ajax/{endpoint}/ajax.aspx"
         
         headers = {
@@ -122,47 +122,46 @@ def buscar_cepea(endpoint, data_inicial, data_final):
             'X-Requested-With': 'XMLHttpRequest'
         }
         
-        # Parâmetros para pegar os últimos 365 dias
         params = {
             'filtro': '1',
-            'dt_inicio': (datetime.now() - timedelta(days=365)).strftime('%d/%m/%Y'),
-            'dt_fim': datetime.now().strftime('%d/%m/%Y')
+            'dt_inicio': data_inicial.strftime('%d/%m/%Y'),
+            'dt_fim': data_final.strftime('%d/%m/%Y')
         }
         
         response = requests.get(url, headers=headers, params=params, timeout=15)
         response.raise_for_status()
         
-        # O CEPEA retorna HTML dentro do JSON
-        dados_json = response.json()
-        html_content = dados_json.get('dados', '')
+        # Processa os dados JSON retornados
+        data = response.json()
         
-        if not html_content:
-            raise Exception("Resposta da API do CEPEA não contém dados")
-            
-        soup = BeautifulSoup(html_content, 'html.parser')
+        if not data.get('sucesso', False) or not data.get('dados'):
+            raise Exception("Resposta da API não contém dados válidos")
+        
+        # Extrai a tabela HTML dos dados
+        soup = BeautifulSoup(data['dados'], 'html.parser')
         tabela = soup.find('table')
         
         if not tabela:
-            raise Exception("Tabela de dados não encontrada no CEPEA")
+            raise Exception("Tabela de dados não encontrada")
         
-        # Extraindo os dados da tabela
-        linhas = tabela.find_all('tr')
+        # Processa as linhas da tabela
+        linhas = tabela.find_all('tr')[1:]  # Pula o cabeçalho
         dados = []
         
-        for linha in linhas[1:]:  # Pula o cabeçalho
+        for linha in linhas:
             cols = linha.find_all('td')
             if len(cols) >= 2:
-                data = cols[0].get_text(strip=True)
-                valor = cols[1].get_text(strip=True).replace('.', '').replace(',', '.')
-                
                 try:
-                    data_dt = datetime.strptime(data, '%d/%m/%Y').date()
-                    valor_float = float(valor)
+                    data_str = cols[0].get_text(strip=True)
+                    valor_str = cols[1].get_text(strip=True).replace('.', '').replace(',', '.')
+                    
+                    data_dt = datetime.strptime(data_str, '%d/%m/%Y').date()
+                    valor = float(valor_str)
                     
                     if data_inicial <= data_dt <= data_final:
                         dados.append({
                             'data': data_dt,
-                            'preco': valor_float
+                            'preco': valor
                         })
                 except ValueError:
                     continue
@@ -177,8 +176,8 @@ def buscar_cepea(endpoint, data_inicial, data_final):
         return df
     
     except Exception as e:
-        st.warning(f"Dados reais do CEPEA temporariamente indisponíveis. Mostrando dados simulados para referência. (Erro: {str(e)})")
-        return gerar_dados_exemplo(data_inicial, data_final, endpoint)
+        st.warning(f"⚠️ Dados reais do CEPEA temporariamente indisponíveis. Mostrando dados simulados para referência. (Erro: {str(e)})")
+        return gerar_dados_realistas(data_inicial, data_final, endpoint)
 
 # Função para buscar dados do IPEAData com cache e tratamento melhorado
 @lru_cache(maxsize=32)

@@ -5,11 +5,6 @@ from datetime import datetime, timedelta
 import json
 import random
 
-try:
-    locale.setlocale(locale.LC_TIME, 'pt_BR.utf8')
-except:
-    locale.setlocale(locale.LC_TIME, 'Portuguese_Brazil')
-
 # Configuração da página
 st.set_page_config(
     page_title="Cotações Agropecuárias - Dados Oficiais",

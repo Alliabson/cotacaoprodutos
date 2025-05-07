@@ -56,23 +56,31 @@ with st.sidebar:
     
     fonte_selecionada = st.selectbox(
         "Selecione a fonte",
-        list(API_PRODUTOS.keys())
+        list(API_PRODUTOS.keys()),
+        key='fonte_selectbox'
+    )
     
     produto_selecionado = st.selectbox(
         "Selecione o produto",
-        list(API_PRODUTOS[fonte_selecionada].keys()))
+        list(API_PRODUTOS[fonte_selecionada].keys()),
+        key='produto_selectbox'
+    )
     
     data_final = st.date_input(
         "Data final",
         value=datetime.now(),
         max_value=datetime.now(),
-        format="DD/MM/YYYY")
+        format="DD/MM/YYYY",
+        key='data_final'
+    )
     
     data_inicial = st.date_input(
         "Data inicial",
         value=datetime.now() - timedelta(days=30),
         max_value=datetime.now(),
-        format="DD/MM/YYYY")
+        format="DD/MM/YYYY",
+        key='data_inicial'
+    )
     
     if data_inicial > data_final:
         st.error("A data inicial deve ser anterior à data final")

@@ -249,7 +249,7 @@ def buscar_bcb(codigo, data_inicial, data_final):
             # Verifica se há erro 404 com mensagem específica
             if response.status_code == 404:
                 error_data = response.json()
-                if "erro" in error_data and "Value(s) not found" in str(error_data["erro"]:
+                if "erro" in error_data and "Value(s) not found" in str(error_data["erro"]):
                     # Tenta com um código alternativo
                     codigos_alternativos = {
                         "7461": "7811",  # Café Arábica

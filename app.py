@@ -48,6 +48,7 @@ with st.sidebar:
     produto_selecionado = st.selectbox(
         "Selecione o produto",
         list(API_PRODUTOS[fonte_selecionada].keys())
+    )
     
     # Novo seletor de datas com calendário
     data_final = st.date_input(

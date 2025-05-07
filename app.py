@@ -5,24 +5,10 @@ from datetime import datetime, timedelta
 import json
 import random
 
-# Configuração robusta do locale
-def configure_locale():
-    try:
-        locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
-    except locale.Error:
-        try:
-            locale.setlocale(locale.LC_ALL, 'pt_BR')
-        except locale.Error:
-            try:
-                locale.setlocale(locale.LC_ALL, 'Portuguese_Brazil.1252')
-            except locale.Error:
-                try:
-                    locale.setlocale(locale.LC_ALL, '')
-                except locale.Error:
-                    locale.setlocale(locale.LC_ALL, 'C.UTF-8')
-                    st.warning("Configuração de locale específica não disponível. Usando padrão internacional.")
-
-configure_locale()
+try:
+    locale.setlocale(locale.LC_TIME, 'pt_BR.utf8')
+except:
+    locale.setlocale(locale.LC_TIME, 'Portuguese_Brazil')
 
 # Configuração da página
 st.set_page_config(

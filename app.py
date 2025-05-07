@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-from utils.api_client import fetch_agro_data
-from utils.data_processing import process_quotes_data
+import requests
 from datetime import datetime, timedelta
+import time
 
 # Configuração da página
 st.set_page_config(
@@ -14,81 +13,138 @@ st.set_page_config(
 
 # Título do aplicativo
 st.title("🌱 Cotações Agropecuárias")
-st.markdown("Acompanhe as cotações de produtos agropecuários em tempo real.")
+st.markdown("Acompanhe as cotações de produtos agropecuários")
 
-# Sidebar com filtros
+# APIs disponíveis
+API_OPTIONS = {
+    "CEPEA - Boi Gordo": {
+        "url": "https://www.cepea.esalq.usp.br/br/indicador/series/boi-gordo.aspx",
+        "codigo": "boi-gordo"
+    },
+    "IPEAData - Soja": {
+        "url": "http://www.ipeadata.gov.br/api/odata4/ValoresSerie(SERCODIGO='PPM12_SOJA12')",
+        "codigo": "PPM12_SOJA12"
+    },
+    "Banco Central - Café": {
+        "url": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.7461/dados",
+        "codigo": "7461"
+    }
+}
+
+# Sidebar
 with st.sidebar:
-    st.header("Filtros")
-    produto = st.selectbox(
-        "Selecione o produto",
-        ["Boi Gordo", "Bezerro", "Milho", "Soja", "Café", "Feijão"],
-        index=0
+    st.header("Configurações")
+    api_selecionada = st.selectbox(
+        "Fonte de dados",
+        list(API_OPTIONS.keys())
     )
     
     dias_historico = st.slider(
-        "Histórico (dias)",
-        min_value=1,
-        max_value=90,
+        "Período (dias)",
+        min_value=7,
+        max_value=365,
         value=30
     )
 
-# Mapeamento de produtos para códigos das APIs
-PRODUTOS_API = {
-    "Boi Gordo": "boi-gordo",
-    "Bezerro": "bezerro",
-    "Milho": "milho",
-    "Soja": "soja",
-    "Café": "cafe",
-    "Feijão": "feijao"
-}
+# Funções para cada API
+def fetch_cepea_data(codigo, dias):
+    """Busca dados do CEPEA (requer scraping ou verificar API real)"""
+    # Exemplo simplificado - na prática precisa de tratamento específico
+    try:
+        url = f"https://www.cepea.esalq.usp.br/br/indicador/ajax/{codigo}.aspx"
+        params = {
+            "dias": dias,
+            "tipo": "json"  # verificar parâmetros reais
+        }
+        response = requests.get(url, params=params, timeout=10)
+        return response.json()
+    except Exception as e:
+        st.error(f"Erro ao acessar CEPEA: {str(e)}")
+        return None
 
-# Função principal
+def fetch_ipeadata(codigo):
+    """Busca dados do IPEAData"""
+    try:
+        url = f"http://www.ipeadata.gov.br/api/odata4/ValoresSerie(SERCODIGO='{codigo}')"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        return pd.DataFrame(data['value'])
+    except Exception as e:
+        st.error(f"Erro ao acessar IPEAData: {str(e)}")
+        return pd.DataFrame()
+
+def fetch_bcb_data(codigo, dias):
+    """Busca dados do Banco Central"""
+    try:
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=dias)
+        
+        url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados"
+        params = {
+            "formato": "json",
+            "dataInicial": start_date.strftime("%d/%m/%Y"),
+            "dataFinal": end_date.strftime("%d/%m/%Y")
+        }
+        response = requests.get(url, params=params, timeout=10)
+        return pd.DataFrame(response.json())
+    except Exception as e:
+        st.error(f"Erro ao acessar BCB: {str(e)}")
+        return pd.DataFrame()
+
+# Processamento dos dados
+def process_data(df, fonte):
+    """Processa os dados conforme a fonte"""
+    if fonte == "CEPEA":
+        df['data'] = pd.to_datetime(df['data'])
+        df['preco'] = pd.to_numeric(df['valor'])
+    elif fonte == "IPEAData":
+        df['data'] = pd.to_datetime(df['VALDATA'])
+        df['preco'] = pd.to_numeric(df['VALVALOR'])
+    elif fonte == "Banco Central":
+        df['data'] = pd.to_datetime(df['data'], dayfirst=True)
+        df['preco'] = pd.to_numeric(df['valor'])
+    
+    return df.sort_values('data').dropna()
+
+# Interface principal
 def main():
-    # Exibe spinner enquanto carrega os dados
-    with st.spinner(f"Carregando cotações para {produto}..."):
+    st.write(f"Fonte selecionada: **{api_selecionada}**")
+    
+    with st.spinner("Carregando dados..."):
         try:
-            # Obtém dados da API
-            data = fetch_agro_data(
-                produto=PRODUTOS_API[produto],
-                dias_historico=dias_historico
-            )
+            # Seleciona a API
+            api_info = API_OPTIONS[api_selecionada]
             
-            # Processa os dados
-            df = process_quotes_data(data)
+            if "CEPEA" in api_selecionada:
+                dados = fetch_cepea_data(api_info['codigo'], dias_historico)
+                df = process_data(pd.DataFrame(dados), "CEPEA")
+            elif "IPEAData" in api_selecionada:
+                df = fetch_ipeadata(api_info['codigo'])
+                df = process_data(df, "IPEAData")
+            elif "Banco Central" in api_selecionada:
+                df = fetch_bcb_data(api_info['codigo'], dias_historico)
+                df = process_data(df, "Banco Central")
             
             if df.empty:
                 st.warning("Não foram encontrados dados para o período selecionado.")
                 return
             
-            # Exibe métricas principais
-            ultima_cotacao = df.iloc[-1]
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Último Preço", f"R$ {ultima_cotacao['preco']:.2f}")
-            col2.metric("Variação Dia", f"{ultima_cotacao['variacao_dia']:.2f}%",
-                       delta=f"{ultima_cotacao['variacao_dia']:.2f}%")
-            col3.metric("Data", ultima_cotacao['data'].strftime("%d/%m/%Y"))
+            # Mostra métricas
+            ultimo = df.iloc[-1]
+            cols = st.columns(3)
+            cols[0].metric("Último Preço", f"R$ {ultimo['preco']:.2f}")
+            cols[1].metric("Data", ultimo['data'].strftime("%d/%m/%Y"))
             
-            # Gráfico de linha com histórico
-            fig = px.line(
-                df,
-                x="data",
-                y="preco",
-                title=f"Histórico de Cotações - {produto}",
-                labels={"preco": "Preço (R$)", "data": "Data"},
-                markers=True
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            # Gráfico nativo do Streamlit
+            st.subheader("Evolução de Preços")
+            st.line_chart(df.set_index('data')['preco'])
             
-            # Tabela com dados detalhados
-            st.subheader("Dados Detalhados")
-            st.dataframe(
-                df.sort_values("data", ascending=False),
-                use_container_width=True,
-                hide_index=True
-            )
+            # Dados brutos
+            st.subheader("Dados Completos")
+            st.dataframe(df.sort_values('data', ascending=False))
             
         except Exception as e:
-            st.error(f"Erro ao carregar dados: {str(e)}")
+            st.error(f"Erro: {str(e)}")
 
 if __name__ == "__main__":
     main()

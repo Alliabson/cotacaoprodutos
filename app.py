@@ -108,7 +108,37 @@ def gerar_dados_exemplo(data_inicial, data_final, produto):
         'data': dates,
         'preco': prices
     })
-
+def gerar_dados_realistas(data_inicial, data_final, produto):
+    """Gera dados fictícios com valores mais próximos da realidade"""
+    # Valores de referência baseados em dados reais (atualizados em maio/2025)
+    valores_reais = {
+        "boi-gordo": 250.00,    # R$/@
+        "bezerro": 1800.00,     # R$/cabeça
+        "milho": 77.10,         # R$/sc60kg
+        "soja": 133.30,         # R$/sc60kg
+        "cafe": 1200.00,        # R$/sc60kg
+        "acucar": 150.00,        # R$/sc50kg
+        "etanol": 3.20,          # R$/litro
+        "algodao": 8.50          # R$/@
+    }
+    
+    dias = (data_final - data_inicial).days + 1
+    base_price = valores_reais.get(produto, 100.00)
+    
+    dates = pd.date_range(start=data_inicial, end=data_final)
+    
+    # Variação diária realista (±1.5%)
+    prices = []
+    current_price = base_price
+    for _ in range(dias):
+        variation = random.uniform(-0.015, 0.015)  # -1.5% a +1.5%
+        current_price *= (1 + variation)
+        prices.append(round(current_price, 2))
+    
+    return pd.DataFrame({
+        'data': dates,
+        'preco': prices
+    })
 # Função para buscar dados do CEPEA com web scraping atualizado
 @lru_cache(maxsize=32)
 def buscar_cepea(endpoint, data_inicial, data_final):

@@ -94,7 +94,7 @@ def gerar_dados_exemplo(data_inicial, data_final, produto):
     dates = pd.date_range(start=data_inicial, end=data_final)
     # Variação mais realista com tendência
     trend = random.uniform(-0.5, 0.5)
-    prices = [base_price * (1 + trend * (i/dias) + random.uniform(-1, 1) for i in range(dias)]
+    prices = [base_price * (1 + trend * (i/dias)) + random.uniform(-1, 1) for i in range(dias)]
     
     return pd.DataFrame({
         'data': dates,

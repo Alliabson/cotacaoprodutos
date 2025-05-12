@@ -51,8 +51,8 @@ class CepeaAPI:
             print(f"Erro ao carregar produtos: {e}")
             return []
     
-    def _get_historical_exchange(self, date):
-        """Obtém cotação histórica do BCB"""
+    def get_historical_prices(self, product_code, start_date, end_date):
+        """Método existente para obter preços históricos"""
         try:
             date_str = date.strftime('%m-%d-%Y')
             url = f"https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarDia(dataCotacao=@dataCotacao)?@dataCotacao='{date_str}'&$format=json"

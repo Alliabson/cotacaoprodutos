@@ -127,16 +127,23 @@ def main():
                         )
                     except Exception as e:
                         st.error(f"Erro na análise sazonal: {str(e)}")
-Passos para Resolver o Problema:
-    
-    elif analysis == "Comparativo" and len(dfs) > 1:
-        st.plotly_chart(
-            Visualizer.create_correlation_plot(
-                [df for _, df in dfs],
-                [name for name, _ in dfs]
-            ),
-            use_container_width=True
-        )
+
+    ##### Passos para Resolver o Problema:  
+    elif analysis == "Sazonal":
+        cols = st.columns(len(dfs))
+        for col, (name, df) in zip(cols, dfs):
+            with col:
+                try:
+                    if len(df) < 730:
+                        st.warning(f"{name}: Necessários 730+ dias para análise sazonal")
+                        continue
+                        
+                    st.plotly_chart(
+                        Visualizer.create_seasonal_plot(df, name),
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.error(f"{name}: {str(e)}")
     
     # Dados brutos
     with st.expander("📊 Ver dados completos"):

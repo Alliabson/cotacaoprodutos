@@ -26,19 +26,29 @@ class DataProcessor:
         return df
     
     @staticmethod
-    def seasonal_decomposition(df, period=365):
-        """Decomposição sazonal dos preços (opcional)"""
-        try:
-            from statsmodels.tsa.seasonal import seasonal_decompose
-            result = seasonal_decompose(df.set_index('date')['price'], 
-                                       period=period, 
-                                       model='additive')
-            df['trend'] = result.trend.values
-            df['seasonal'] = result.seasonal.values
-            df['residual'] = result.resid.values
-        except ImportError:
-            st.warning("statsmodels não instalado - decomposição sazonal desativada")
-        return df
+def seasonal_decomposition(df, period=365):
+    """Decomposição sazonal com verificação de dados suficientes"""
+    try:
+        from statsmodels.tsa.seasonal import seasonal_decompose
+        
+        if len(df) < 2 * period:
+            raise ValueError(f"Necessário mínimo de {2*period} dias para análise sazonal")
+            
+        result = seasonal_decompose(df.set_index('date')['price'], 
+                                 period=period, 
+                                 model='additive')
+        df['trend'] = result.trend.values
+        df['seasonal'] = result.seasonal.values
+        df['residual'] = result.resid.values
+        
+    except ImportError:
+        raise ImportError("statsmodels não instalado")
+    except ValueError as e:
+        raise ValueError(str(e))
+    except Exception as e:
+        raise Exception(f"Erro na decomposição: {str(e)}")
+    
+    return df
     
     @staticmethod
     def prepare_analysis_data(df):

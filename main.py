@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 from datetime import datetime, timedelta
 from utils.api_connector import CepeaAPI
 from utils.data_processor import DataProcessor
@@ -15,16 +14,19 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Carregar dados
+# Carregar produtos
 @st.cache_data
 def load_products():
     api = CepeaAPI()
     return api.get_available_products()
 
+# Processar dados
 @st.cache_data(ttl=3600, show_spinner="Carregando dados históricos...")
 def get_processed_data(product_code, start_date, end_date):
     api = CepeaAPI()
     raw_data = api.get_historical_prices(product_code, start_date, end_date)
+    if raw_data.empty:
+        return raw_data
     return DataProcessor.prepare_analysis_data(raw_data)
 
 # Interface principal
@@ -36,17 +38,25 @@ def main():
     with st.sidebar:
         st.header("🔍 Parâmetros de Consulta")
         products = load_products()
+        
+        # Verifica se products não está vazio
+        if not products:
+            st.error("Não foi possível carregar a lista de produtos")
+            return
+            
         selected_products = st.multiselect(
             "Selecione os produtos",
             options=[p['name'] for p in products],
-            default=[p['name'] for p in products][:1]
+            default=[products[0]['name'] if products else None
         )
         
         # Converter nomes para códigos
-        product_codes = [
-            next(p['code'] for p in products if p['name'] == name
-            for name in selected_products
-        ]
+        product_codes = []
+        for name in selected_products:
+            for p in products:
+                if p['name'] == name:
+                    product_codes.append(p['code'])
+                    break
         
         # Seletor de datas
         col1, col2 = st.columns(2)
@@ -81,19 +91,22 @@ def main():
         show_stats = st.checkbox("Mostrar estatísticas", value=True)
     
     # Conteúdo principal
+    if not selected_products:
+        st.warning("Selecione pelo menos um produto")
+        return
+    
     tab1, tab2, tab3 = st.tabs(["📈 Visualização", "📊 Estatísticas", "💾 Exportar"])
     
     with tab1:
-        if not selected_products:
-            st.warning("Selecione pelo menos um produto")
-            return
-        
         dfs = []
         for code, name in zip(product_codes, selected_products):
-            dfs.append(get_processed_data(code, start_date, end_date))
-        
-        if analysis_type == "Histórico de Preços":
-            for df, name in zip(dfs, selected_products):
+            df = get_processed_data(code, start_date, end_date)
+            if df.empty:
+                st.error(f"Nenhum dado encontrado para {name}")
+                continue
+            dfs.append(df)
+            
+            if analysis_type == "Histórico de Preços":
                 st.plotly_chart(
                     Visualizer.create_historical_plot(df, name),
                     use_container_width=True

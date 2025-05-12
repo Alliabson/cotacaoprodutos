@@ -6,6 +6,19 @@ from utils.data_processor import DataProcessor
 from utils.visualization import Visualizer
 import os
 
+def check_dependencies():
+    try:
+        import statsmodels
+        return True
+    except ImportError:
+        st.warning("""
+        Algumas funcionalidades avançadas estão desativadas porque 
+        o pacote statsmodels não está instalado. Para ativar todas 
+        as funcionalidades, instale com: 
+        `pip install statsmodels`
+        """)
+        return False
+
 # Configuração básica da página
 def setup_page():
     st.set_page_config(
@@ -101,16 +114,20 @@ def main():
             )
     
     elif analysis == "Sazonal":
-        cols = st.columns(len(dfs))
-        for col, (name, df) in zip(cols, dfs):
-            with col:
-                try:
-                    st.plotly_chart(
-                        Visualizer.create_seasonal_plot(df, name),
-                        use_container_width=True
-                    )
-                except Exception as e:
-                    st.error(f"Não foi possível gerar análise sazonal: {str(e)}")
+        if not has_full_functionality:
+            st.error("Análise sazonal requer statsmodels. Instale com: pip install statsmodels")
+        else:
+            cols = st.columns(len(dfs))
+            for col, (name, df) in zip(cols, dfs):
+                with col:
+                    try:
+                        st.plotly_chart(
+                            Visualizer.create_seasonal_plot(df, name),
+                            use_container_width=True
+                        )
+                    except Exception as e:
+                        st.error(f"Erro na análise sazonal: {str(e)}")
+Passos para Resolver o Problema:
     
     elif analysis == "Comparativo" and len(dfs) > 1:
         st.plotly_chart(

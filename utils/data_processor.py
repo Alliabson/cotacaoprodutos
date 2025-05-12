@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-from statsmodels.tsa.seasonal import seasonal_decompose
 
 class DataProcessor:
     @staticmethod
@@ -28,13 +27,17 @@ class DataProcessor:
     
     @staticmethod
     def seasonal_decomposition(df, period=365):
-        """Decomposição sazonal dos preços"""
-        result = seasonal_decompose(df.set_index('date')['price'], 
-                                   period=period, 
-                                   model='additive')
-        df['trend'] = result.trend.values
-        df['seasonal'] = result.seasonal.values
-        df['residual'] = result.resid.values
+        """Decomposição sazonal dos preços (opcional)"""
+        try:
+            from statsmodels.tsa.seasonal import seasonal_decompose
+            result = seasonal_decompose(df.set_index('date')['price'], 
+                                       period=period, 
+                                       model='additive')
+            df['trend'] = result.trend.values
+            df['seasonal'] = result.seasonal.values
+            df['residual'] = result.resid.values
+        except ImportError:
+            st.warning("statsmodels não instalado - decomposição sazonal desativada")
         return df
     
     @staticmethod

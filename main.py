@@ -49,8 +49,18 @@ def get_data(product_code, start_date, end_date):
     try:
         api = CepeaAPI()
         raw_data = api.get_historical_prices(product_code, start_date, end_date)
+        
         if not raw_data.empty:
-            return DataProcessor.prepare_analysis_data(raw_data)
+            # Processa os dados
+            processed_data = DataProcessor.prepare_analysis_data(raw_data)
+            
+            # Formatação dos valores
+            processed_data['price'] = processed_data['price'].round(2)
+            if 'price_usd' in processed_data.columns:
+                processed_data['price_usd'] = processed_data['price_usd'].round(2)
+            
+            return processed_data
+        
         return pd.DataFrame()
     except Exception as e:
         st.error(f"Erro ao processar dados: {str(e)}")

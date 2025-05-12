@@ -9,24 +9,47 @@ from bs4 import BeautifulSoup
 
 load_dotenv()
 
+import requests
+import pandas as pd
+import os
+import json
+from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
+
 class CepeaAPI:
     def __init__(self):
         self.base_url = "https://www.cepea.esalq.usp.br/br"
-        self.cache_dir = "data/historical_cache"
-        self.exchange_cache = "data/exchange_rates.parquet"
-        os.makedirs(self.cache_dir, exist_ok=True)
-        
-    def _get_current_exchange_rate(self):
-        """Obtém a cotação atual do dólar comercial"""
+        self.products_cache = "data/products_cache.json"
+        os.makedirs(os.path.dirname(self.products_cache), exist_ok=True)
+
+    def get_available_products(self):
+        """Retorna a lista de produtos disponíveis com códigos"""
         try:
-            url = "https://www.bcb.gov.br/conteudo/home-ptbr/indicadores/cambio/cambio.csv"
-            response = requests.get(url, timeout=10)
-            lines = response.text.split('\n')
-            last_line = [l for l in lines if l.startswith('USD')][-1]
-            rate = float(last_line.split(';')[3].replace(',', '.'))
-            return rate
-        except Exception:
-            return 5.0  # Fallback
+            # Tenta carregar do cache
+            if os.path.exists(self.products_cache):
+                with open(self.products_cache, 'r') as f:
+                    return json.load(f)
+            
+            # Lista de produtos padrão (substitua pela chamada real à API)
+            default_products = [
+                {"code": "BGI", "name": "Boi Gordo", "unit": "arroba"},
+                {"code": "MIL", "name": "Milho", "unit": "saca 60kg"},
+                {"code": "SOJ", "name": "Soja", "unit": "saca 60kg"},
+                {"code": "CAF", "name": "Café Arábica", "unit": "saca 60kg"},
+                {"code": "SUC", "name": "Açúcar Cristal", "unit": "saca 50kg"}
+            ]
+            
+            # Salva no cache
+            with open(self.products_cache, 'w') as f:
+                json.dump(default_products, f)
+            
+            return default_products
+            
+        except Exception as e:
+            print(f"Erro ao carregar produtos: {e}")
+            return []
     
     def _get_historical_exchange(self, date):
         """Obtém cotação histórica do BCB"""

@@ -1,0 +1,10 @@
+[
+  {"code": "BOI", "name": "Boi Gordo"},
+  {"code": "SOJ", "name": "Soja"},
+  {"code": "MIL", "name": "Milho"},
+  {"code": "CAF", "name": "Café Arábica"},
+  {"code": "SUC", "name": "Cana-de-Açúcar"},
+  {"code": "ALG", "name": "Algodão"},
+  {"code": "TRG", "name": "Trigo"},
+  {"code": "SUI", "name": "Suíno"}
+]

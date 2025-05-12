@@ -1,10 +1,19 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-from utils.api_connector import CepeaAPI
-from utils.data_processor import DataProcessor
-from utils.visualization import Visualizer
 import os
+import sys
+
+# Adiciona o diretório pai ao path para importar utils
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from utils.api_connector import CepeaAPI
+    from utils.data_processor import DataProcessor
+    from utils.visualization import Visualizer
+except ImportError as e:
+    st.error(f"Erro ao importar módulos: {str(e)}")
+    st.stop()
 
 def check_dependencies():
     try:
@@ -19,7 +28,6 @@ def check_dependencies():
         """)
         return False
 
-# Configuração básica da página
 def setup_page():
     st.set_page_config(
         page_title="CEPEA Analytics",
@@ -29,7 +37,6 @@ def setup_page():
     st.title("🌱 Análise de Cotações Agrícolas")
     st.markdown("Dados da CEPEA - ESALQ/USP")
 
-# Carregar produtos com tratamento de erro
 def load_products_safe():
     try:
         api = CepeaAPI()
@@ -38,7 +45,6 @@ def load_products_safe():
         st.error(f"Erro ao carregar produtos: {str(e)}")
         return []
 
-# Obter dados processados
 def get_data(product_code, start_date, end_date):
     try:
         api = CepeaAPI()
@@ -50,12 +56,10 @@ def get_data(product_code, start_date, end_date):
         st.error(f"Erro ao processar dados: {str(e)}")
         return pd.DataFrame()
 
-# Interface principal
 def main():
     setup_page()
     has_full_functionality = check_dependencies()
     
-    # Sidebar
     with st.sidebar:
         st.header("🔍 Filtros")
         products = load_products_safe()
@@ -69,7 +73,6 @@ def main():
             default=[products[0]['name']]
         )
         
-        # Datas
         today = datetime.now()
         start = st.date_input(
             "Data inicial",
@@ -87,12 +90,10 @@ def main():
             ["Histórico", "Sazonal", "Comparativo"]
         )
 
-    # Verificação básica
     if not selected or start > end:
         st.warning("Selecione pelo menos um produto e datas válidas")
         return
     
-    # Obter dados
     dfs = []
     for product in selected:
         code = next((p['code'] for p in products if p['name'] == product), None)
@@ -105,7 +106,6 @@ def main():
         st.error("Nenhum dado encontrado para os filtros selecionados")
         return
     
-    # Visualizações
     if analysis == "Histórico":
         for name, df in dfs:
             st.subheader(name)
@@ -125,7 +125,6 @@ def main():
                         if len(df) < 730:
                             st.warning(f"{name}: Necessários 730+ dias para análise sazonal")
                             continue
-                            
                         st.plotly_chart(
                             Visualizer.create_seasonal_plot(df, name),
                             use_container_width=True
@@ -145,7 +144,6 @@ def main():
         else:
             st.warning("Selecione pelo menos 2 produtos para comparação")
     
-    # Dados brutos
     with st.expander("📊 Ver dados completos"):
         for name, df in dfs:
             st.subheader(name)

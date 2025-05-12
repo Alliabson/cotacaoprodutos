@@ -53,6 +53,7 @@ def get_data(product_code, start_date, end_date):
 # Interface principal
 def main():
     setup_page()
+    has_full_functionality = check_dependencies()
     
     # Sidebar
     with st.sidebar:
@@ -121,29 +122,28 @@ def main():
             for col, (name, df) in zip(cols, dfs):
                 with col:
                     try:
+                        if len(df) < 730:
+                            st.warning(f"{name}: Necessários 730+ dias para análise sazonal")
+                            continue
+                            
                         st.plotly_chart(
                             Visualizer.create_seasonal_plot(df, name),
                             use_container_width=True
                         )
                     except Exception as e:
-                        st.error(f"Erro na análise sazonal: {str(e)}")
-
-    ##### Passos para Resolver o Problema:  
-    elif analysis == "Sazonal":
-        cols = st.columns(len(dfs))
-        for col, (name, df) in zip(cols, dfs):
-            with col:
-                try:
-                    if len(df) < 730:
-                        st.warning(f"{name}: Necessários 730+ dias para análise sazonal")
-                        continue
-                        
-                    st.plotly_chart(
-                        Visualizer.create_seasonal_plot(df, name),
-                        use_container_width=True
-                    )
-                except Exception as e:
-                    st.error(f"{name}: {str(e)}")
+                        st.error(f"{name}: {str(e)}")
+    
+    elif analysis == "Comparativo":
+        if len(dfs) > 1:
+            st.plotly_chart(
+                Visualizer.create_correlation_plot(
+                    [df for _, df in dfs],
+                    [name for name, _ in dfs]
+                ),
+                use_container_width=True
+            )
+        else:
+            st.warning("Selecione pelo menos 2 produtos para comparação")
     
     # Dados brutos
     with st.expander("📊 Ver dados completos"):

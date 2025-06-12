@@ -103,120 +103,191 @@ class CepeaAPI:
         }
         return units.get(product_code, "unidade")
 
-    def _scrape_cepea_data(self, product_code, start_date, end_date):
-        """
-        Realiza o web scraping do site do CEPEA para obter dados históricos.
-        Esta função é específica para o formato de tabela de 'Série de Preços' do CEPEA.
-        """
-        product_info = self.product_info_map.get(product_code)
-        if not product_info:
-            print(f"Informações de URL/ID para o produto {product_code} não configuradas.")
-            return pd.DataFrame()
+    # api_connector.py (Apenas a função _scrape_cepea_data foi modificada, o resto permanece como na última versão)
 
-        url_name = product_info["url_name"]
-        id_indicador = product_info["id_indicador"]
-        
-        # A URL para a série de preços histórica com filtro por indicador
-        # NOTA: O CEPEA tem um filtro de data na página, mas não diretamente via parâmetros GET.
-        # Precisaremos carregar a página e tentar extrair a tabela completa, e então filtrar.
-        url_to_scrape = f"{self.base_url_cotacoes}{url_name}.aspx?id_indicador={id_indicador}"
-        
-        print(f"Tentando scraping de: {url_to_scrape} para {product_code}")
+def _scrape_cepea_data(self, product_code, start_date, end_date):
+    """
+    Realiza o web scraping do site do CEPEA para obter dados históricos.
+    Esta função é específica para o formato de tabela de 'Série de Preços' do CEPEA.
+    Tenta encontrar a tabela principal de histórico com base nos cabeçalhos esperados.
+    """
+    product_info = self.product_info_map.get(product_code)
+    if not product_info:
+        print(f"ERRO: Informações de URL/ID para o produto {product_code} não configuradas em product_info_map.")
+        return pd.DataFrame()
 
+    url_name = product_info["url_name"]
+    id_indicador = product_info["id_indicador"]
+    
+    # A URL para a série de preços histórica com filtro por indicador
+    url_to_scrape = f"{self.base_url_cotacoes}{url_name}.aspx?id_indicador={id_indicador}"
+    
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Tentando scraping de: {url_to_scrape} para {product_code}")
+
+    try:
+        # Adiciona headers para simular um navegador e evitar bloqueios
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Connection": "keep-alive"
+        }
+        response = requests.get(url_to_scrape, timeout=20, headers=headers) # Aumenta o timeout
+        response.raise_for_status() # Lança exceção para status 4xx/5xx
+
+        # Tentar encontrar a tabela principal de histórico
+        # pd.read_html pode falhar se o HTML for muito "bagunçado" ou se a tabela for carregada por JS.
+        # Vamos tentar ser mais específicos na busca.
+
+        # Critérios para encontrar a tabela certa:
+        # Ela deve conter colunas como 'Data', 'VALOR R$*', 'VAR./DIA', 'VAR./MÊS', 'VALOR US$*'
+        # O 'match' regex ajuda a ser mais flexível com variações nos nomes das colunas
+        table_match_regex = r'Data|VALOR R\$|\@ Vista|\@ Prazo|Preço|VALOR US\$'
+        
         try:
-            response = requests.get(url_to_scrape, timeout=15) # Aumenta o timeout
-            response.raise_for_status() # Lança exceção para status 4xx/5xx
-            soup = BeautifulSoup(response.text, 'html.parser')
-
-            # Tenta encontrar a tabela que contém os dados históricos
-            # O CEPEA geralmente tem tabelas com colunas como "Data", "VALOR R$*", "VAR./DIA", "VALOR US$*"
-            # Vamos procurar por uma tabela com essas colunas.
+            # Tenta ler todas as tabelas e encontrar a que mais se encaixa
+            dfs = pd.read_html(response.text, decimal=',', thousands='.', flavor='bs4', match=table_match_regex)
             
-            # Uma forma robusta é usar pd.read_html e depois identificar a tabela correta
-            dfs = pd.read_html(response.text, decimal=',', thousands='.', flavor='bs4') # flavor='bs4' usa BeautifulSoup
-            
-            # Tentando encontrar a tabela que mais se parece com a de histórico
             target_df = pd.DataFrame()
+            
+            # Percorre os DataFrames encontrados e tenta identificar o correto
             for df_candidate in dfs:
-                # Critérios para identificar a tabela correta
-                if 'Data' in df_candidate.columns and ('VALOR R$*' in df_candidate.columns or 'VALOR US$*' in df_candidate.columns or 'VALOR R$' in df_candidate.columns):
+                # Verifique se o DataFrame candidato tem as colunas esperadas para o histórico
+                # As colunas mais confiáveis são "Data" e pelo menos uma coluna de valor (R$ ou US$)
+                has_date_col = any(col for col in df_candidate.columns if 'Data' in str(col))
+                has_price_col_brl = any(col for col in df_candidate.columns if 'VALOR R$' in str(col) or 'À Vista' in str(col) or 'Preço à vista' in str(col))
+                has_price_col_usd = any(col for col in df_candidate.columns if 'VALOR US$' in str(col))
+                
+                if has_date_col and (has_price_col_brl or has_price_col_usd):
                     target_df = df_candidate
+                    # print(f"[{datetime.now().strftime('%H:%M:%S')}] Tabela identificada com sucesso!") # Para depuração
                     break
             
             if target_df.empty:
-                print(f"Aviso: Tabela de histórico não encontrada na página para {product_code} ({url_to_scrape}).")
-                return pd.DataFrame()
-
-            df_temp = target_df.copy() # Trabalha em uma cópia
-
-            # Renomear e limpar colunas
-            col_mapping = {}
-            for col in df_temp.columns:
-                if 'Data' in col: col_mapping[col] = 'date'
-                elif 'VALOR R$*' in col or 'VALOR R$' in col: col_mapping[col] = 'price' # Preço em BRL
-                elif 'VALOR US$*' in col or 'VALOR US$' in col: col_mapping[col] = 'price_usd_scraped' # Preço em USD (raspadinho)
-                # Adicione mais mapeamentos se houver outras colunas importantes, como variação
-
-            df_temp = df_temp.rename(columns=col_mapping)
-            
-            # Assegura que as colunas essenciais existem
-            if 'date' not in df_temp.columns or ('price' not in df_temp.columns and 'price_usd_scraped' not in df_temp.columns):
-                print(f"Erro: Colunas 'date' ou 'price'/'price_usd' não encontradas após renomeação para {product_code}.")
-                return pd.DataFrame()
-
-            # Converte 'date' para datetime
-            df_temp['date'] = pd.to_datetime(df_temp['date'], format='%d/%m/%Y', errors='coerce')
-            df_temp.dropna(subset=['date'], inplace=True)
-
-            # Limpa e converte 'price' e 'price_usd_scraped' para numérico
-            # Remove pontos, substitui vírgulas por pontos e converte para float
-            for col in ['price', 'price_usd_scraped']:
-                if col in df_temp.columns:
-                    df_temp[col] = df_temp[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-                    df_temp[col] = pd.to_numeric(df_temp[col], errors='coerce')
-            
-            # Remove linhas com valores nulos nos preços
-            df_temp.dropna(subset=['price'] if 'price' in df_temp.columns else ['price_usd_scraped'], inplace=True)
-
-            # Filtra pelo período desejado
-            df_temp = df_temp[(df_temp['date'] >= start_date) & (df_temp['date'] <= end_date)].copy()
-            
-            if not df_temp.empty:
-                df_temp['product'] = product_code
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] AVISO: Nenhuma tabela relevante encontrada por pd.read_html para {product_code} na URL {url_to_scrape}.")
+                # Se pd.read_html falhou, tente buscar com BeautifulSoup diretamente
+                soup = BeautifulSoup(response.text, 'html.parser')
+                # Tenta encontrar a tabela que tem um cabeçalho específico ou classe
+                # Esta parte pode precisar de ajuste manual após inspecionar o HTML
+                table_element = soup.find('table', class_='tabela-indicador') # Exemplo de classe, verificar no site
+                if not table_element:
+                     table_element = soup.find('table', string=re.compile(r'Data.*VALOR R\$')) # Outra heurística
                 
-                # Se o produto for em USD na fonte (CEPEA), 'price' do scraper é o USD.
-                # Vamos padronizar: 'price' será sempre BRL e 'price_usd' será USD.
-                if product_info["currency"] == 'USD' and 'price_usd_scraped' in df_temp.columns:
-                    # O 'price' raspado na coluna 'VALOR R$*' é o preço em BRL
-                    # O 'price_usd_scraped' é o preço em USD
-                    df_temp['price_usd'] = df_temp['price_usd_scraped']
-                    # O 'price' já vem como BRL da coluna 'VALOR R$*', então não precisamos converter com câmbio aqui
-                    # Apenas manter a coluna 'price' como BRL
-                    df_temp.drop(columns=['price_usd_scraped'], inplace=True)
-                    
-                elif product_info["currency"] == 'BRL':
-                    # Se o produto é em BRL, 'price' já é BRL.
-                    # As colunas de USD (se existirem) podem ser nulas ou removidas para evitar confusão
-                    if 'price_usd_scraped' in df_temp.columns:
-                        df_temp['price_usd'] = df_temp['price_usd_scraped']
-                        df_temp.drop(columns=['price_usd_scraped'], inplace=True)
+                if table_element:
+                    # Se encontrou uma tabela com BS4, tenta converter para DataFrame
+                    # headers = [th.text.strip() for th in table_element.find_all('th')] # Cabeçalhos podem estar dentro de <thead>
+                    rows = []
+                    for tr in table_element.find_all('tr'):
+                        cells = [td.text.strip() for td in tr.find_all(['td', 'th'])] # Pega td ou th
+                        if cells: # Garante que a linha não está vazia
+                            rows.append(cells)
+                    if rows:
+                        # A primeira linha pode ser o cabeçalho. Verifique se tem mais de uma linha.
+                        if len(rows) > 1:
+                            target_df = pd.DataFrame(rows[1:], columns=rows[0])
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}] Tabela encontrada com BeautifulSoup e convertida.")
+                        else:
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}] AVISO: Tabela encontrada com BeautifulSoup, mas sem dados suficientes.")
+                            return pd.DataFrame()
                     else:
-                        df_temp['price_usd'] = None # Ou pd.NA
-                
-                # Garante que as colunas finais estão presentes
-                final_cols = ['date', 'price', 'product']
-                if 'price_usd' in df_temp.columns:
-                    final_cols.append('price_usd')
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] AVISO: Tabela encontrada com BeautifulSoup, mas sem linhas.")
+                        return pd.DataFrame()
+                else:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] AVISO: Nenhuma tabela de histórico encontrada com BeautifulSoup.")
+                    return pd.DataFrame()
 
-                return df_temp[final_cols]
+        except Exception as pd_html_err:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ERRO ao tentar pd.read_html para {product_code}: {pd_html_err}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Conteúdo HTML para depuração (primeiros 500 caracteres):\n{response.text[:500]}")
+            # Se pd.read_html falhou por algum motivo, retorna vazio
+            return pd.DataFrame()
+
+
+        if target_df.empty:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ERRO: DataFrame final vazio após tentativas de scraping para {product_code}.")
+            return pd.DataFrame()
+
+        df_temp = target_df.copy() # Trabalha em uma cópia
+
+        # --- Mapeamento e Limpeza de Colunas ---
+        # Esta parte é CRUCIAL e precisa ser adaptada se os nomes mudarem no site do CEPEA.
+        # Use Regex para ser mais flexível com espaços, asteriscos, etc.
+        
+        # Encontra as colunas de Data e Preço (R$ e US$)
+        date_col = next((col for col in df_temp.columns if re.search(r'data', str(col), re.IGNORECASE)), None)
+        price_brl_col = next((col for col in df_temp.columns if re.search(r'VALOR R\$|\bÀ Vista\b|\bPreço à vista\b', str(col), re.IGNORECASE)), None)
+        price_usd_col = next((col for col in df_temp.columns if re.search(r'VALOR US\$', str(col), re.IGNORECASE)), None)
+
+        if not date_col:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ERRO: Coluna 'Data' não encontrada no DataFrame raspado para {product_code}. Colunas disponíveis: {df_temp.columns.tolist()}")
+            return pd.DataFrame()
+        
+        # Renomeia as colunas
+        df_temp = df_temp.rename(columns={date_col: 'date'})
+        if price_brl_col:
+            df_temp = df_temp.rename(columns={price_brl_col: 'price'})
+        if price_usd_col:
+            df_temp = df_temp.rename(columns={price_usd_col: 'price_usd_scraped'})
+
+        # Converte 'date' para datetime
+        df_temp['date'] = pd.to_datetime(df_temp['date'], format='%d/%m/%Y', errors='coerce')
+        df_temp.dropna(subset=['date'], inplace=True) # Remove linhas com datas inválidas
+
+        # Limpa e converte colunas de preço para numérico
+        # Remove tudo que não é número ou vírgula, depois substitui vírgula por ponto
+        for col_name in ['price', 'price_usd_scraped']:
+            if col_name in df_temp.columns:
+                # Converte para string para aplicar replace, depois para numérico
+                df_temp[col_name] = df_temp[col_name].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+                df_temp[col_name] = pd.to_numeric(df_temp[col_name], errors='coerce')
+                
+        # Remove linhas com valores nulos nos preços que são cruciais
+        if 'price' in df_temp.columns:
+            df_temp.dropna(subset=['price'], inplace=True)
+        elif 'price_usd_scraped' in df_temp.columns:
+            df_temp.dropna(subset=['price_usd_scraped'], inplace=True)
+        else:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ERRO: Nenhuma coluna de preço válida (R$ ou US$) encontrada após limpeza para {product_code}.")
+            return pd.DataFrame()
+
+
+        # Filtra pelo período desejado
+        df_temp = df_temp[(df_temp['date'] >= start_date) & (df_temp['date'] <= end_date)].copy()
+        
+        if not df_temp.empty:
+            df_temp['product'] = product_code
             
-        except requests.exceptions.RequestException as req_err:
-            print(f"Erro de requisição ao CEPEA para {product_code} ({url_to_scrape}): {req_err}")
-        except Exception as e:
-            print(f"Erro inesperado no scraping para {product_code} ({url_to_scrape}): {e}")
-            # print(response.text) # Descomente para depurar o HTML completo
+            # Padronização: 'price' será sempre BRL, 'price_usd' será USD (se aplicável)
+            final_price_cols = []
             
-        return pd.DataFrame()
+            # Lógica para produtos em USD na fonte (Café, Açúcar se for o caso)
+            # A coluna 'VALOR R$*' (raspada para 'price') já é BRL, e 'VALOR US$*' (raspada para 'price_usd_scraped') é USD.
+            # Então, se 'price_usd_scraped' existe, significa que o CEPEA fornece o valor em USD diretamente.
+            
+            if 'price_usd_scraped' in df_temp.columns:
+                df_temp['price_usd'] = df_temp['price_usd_scraped']
+                final_price_cols.append('price_usd')
+                # A coluna 'price' já contém o valor em BRL raspado.
+            else:
+                # Se não tem 'price_usd_scraped', assume que 'price' é BRL e não há USD direto.
+                df_temp['price_usd'] = pd.NA # Define como NA se não houver coluna USD raspada
+            
+            final_cols_to_keep = ['date', 'price', 'product'] + final_price_cols
+            
+            # Remove colunas intermediárias (se houver)
+            df_final = df_temp[final_cols_to_keep].copy()
+            
+            return df_final
+        
+    except requests.exceptions.RequestException as req_err:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] ERRO de requisição ao CEPEA para {product_code} ({url_to_scrape}): {req_err}")
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] ERRO INESPERADO no scraping para {product_code} ({url_to_scrape}): {e}")
+        # Comentar para não poluir demais, descomentar para depuração profunda:
+        # print(f"[{datetime.now().strftime('%H:%M:%S')}] Conteúdo HTML completo para depuração:\n{response.text}") 
+        
+    return pd.DataFrame()
 
     def get_historical_prices(self, product_code, start_date, end_date):
         """Obtém preços históricos com tratamento de moeda e cache."""

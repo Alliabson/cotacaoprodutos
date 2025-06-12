@@ -119,10 +119,13 @@ class Visualizer:
             return fig
         
         # Alinhar os DataFrames pela data para correlação
-        combined_df = pd.DataFrame({'date': pd.date_range(start=dfs[0]['date'].min(), end=dfs[0]['date'].max())})
+        # Pega a data mínima e máxima combinada de todos os DFs
+        min_date = min(df['date'].min() for df in dfs)
+        max_date = max(df['date'].max() for df in dfs)
+        combined_df = pd.DataFrame({'date': pd.date_range(start=min_date, end=max_date)})
         
         for name, df in zip(product_names, dfs):
-            # Garante que 'date' é o índice para o merge
+            # Garante que 'date' é o índice para o merge e seleciona apenas 'price'
             df_temp = df[['date', 'price']].set_index('date')
             df_temp = df_temp.rename(columns={'price': name})
             combined_df = pd.merge(combined_df, df_temp, on='date', how='outer')
@@ -152,9 +155,5 @@ class Visualizer:
             template='plotly_white',
             height=600
         )
-        
-        # Opcional: Mostrar correlação em algum lugar (pode ser uma tabela à parte)
-        # correlation_matrix = combined_df.corr()
-        # st.dataframe(correlation_matrix)
         
         return fig

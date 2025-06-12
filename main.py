@@ -5,7 +5,7 @@ import os
 import sys
 
 # Adiciona o diretório pai ao path para importar utils
-# Certifique-se de que a estrutura do seu projeto seja:
+# Garante que a estrutura do seu projeto seja:
 # seu_projeto/
 # ├── main.py
 # └── utils/
@@ -20,11 +20,11 @@ try:
     from utils.data_processor import DataProcessor
     from utils.visualization import Visualizer
 except ImportError as e:
-    st.error(f"Erro ao importar módulos essenciais. Verifique a estrutura das pastas 'utils' e o conteúdo dos arquivos: {str(e)}")
-    st.stop()
+    st.error(f"Erro ao importar módulos essenciais. Verifique a estrutura das pastas 'utils' e o conteúdo dos arquivos. Detalhes: {str(e)}")
+    st.stop() # Interrompe a execução do app se as importações falharem
 
 def check_dependencies():
-    """Verifica se as dependências opcionais estão instaladas."""
+    """Verifica se as dependências opcionais (como statsmodels) estão instaladas."""
     try:
         import statsmodels
         return True
@@ -46,14 +46,14 @@ def setup_page():
     st.title("🌱 Análise de Cotações Agrícolas")
     st.markdown("Dados da CEPEA - ESALQ/USP")
 
-@st.cache_data(ttl=86400) # Cacheia os produtos por 24 horas
+@st.cache_data(ttl=86400) # Cacheia os produtos por 24 horas para evitar requisições repetidas
 def load_products_safe():
     """Carrega a lista de produtos disponíveis da API de forma segura."""
     try:
         api = CepeaAPI()
         products = api.get_available_products()
         if not products:
-            st.error("Não foi possível carregar a lista de produtos da API. Verifique a conexão ou a API.")
+            st.error("Não foi possível carregar a lista de produtos disponíveis da API. Verifique a conexão ou a configuração em `api_connector.py`.")
             return []
         return products
     except Exception as e:
@@ -62,24 +62,23 @@ def load_products_safe():
 
 @st.cache_data(ttl=3600) # Cacheia os dados históricos por 1 hora
 def get_processed_data_safe(product_code, start_date, end_date):
-    """Obtém e processa os dados históricos de forma segura."""
+    """Obtém dados históricos da API e os processa, com tratamento de erros."""
     try:
         api = CepeaAPI()
         with st.spinner(f"Carregando dados históricos para {product_code}..."):
             raw_data = api.get_historical_prices(product_code, start_date, end_date)
         
         if raw_data.empty:
-            return pd.DataFrame() # Retorna DataFrame vazio se não houver dados
+            return pd.DataFrame() # Retorna DataFrame vazio se não houver dados ou houver falha no scraping
 
-        # Processa os dados
         processed_data = DataProcessor.prepare_analysis_data(raw_data)
         
         if processed_data.empty:
-            st.warning(f"Os dados para o produto {product_code} foram carregados, mas o processamento resultou em um DataFrame vazio.")
+            st.warning(f"Os dados para o produto {product_code} foram carregados, mas o processamento resultou em um DataFrame vazio. Verifique `data_processor.py`.")
             return pd.DataFrame()
 
-        # Formatação dos valores para 2 casas decimais
-        if 'price' in processed_data.columns:
+        # Formatação final dos valores para 2 casas decimais
+        if 'price' in processed_data.columns and processed_data['price'] is not None:
             processed_data['price'] = processed_data['price'].round(2)
         if 'price_usd' in processed_data.columns and processed_data['price_usd'] is not None:
             processed_data['price_usd'] = processed_data['price_usd'].round(2)
@@ -89,88 +88,72 @@ def get_processed_data_safe(product_code, start_date, end_date):
             processed_data['date'] = pd.to_datetime(processed_data['date'])
             processed_data = processed_data.sort_values(by='date')
         else:
-            st.warning(f"A coluna 'date' não foi encontrada nos dados processados para {product_code}.")
+            st.warning(f"A coluna 'date' não foi encontrada nos dados processados para {product_code}. Verifique `data_processor.py`.")
             return pd.DataFrame()
 
         return processed_data
     except Exception as e:
-        st.error(f"Erro ao obter ou processar dados históricos para {product_code}: {str(e)}")
+        st.error(f"Erro ao obter ou processar dados históricos para {product_code}: {str(e)}. Verifique `api_connector.py` e `data_processor.py`.")
         return pd.DataFrame()
 
-def display_product_metrics(product_name, df):
+def display_product_metrics(product_name, df, product_unit="unidade"):
     """Exibe os cartões de métricas para um produto."""
     if df.empty:
         st.warning(f"Não há dados para exibir métricas para {product_name} no período selecionado.")
         return
 
-    # Certifica-se de que o DataFrame está ordenado por data
     df_sorted = df.sort_values(by='date').copy()
     
-    # Pega o primeiro e o último preço válido no período
-    # Evita iloc[0] ou iloc[-1] se o DF tiver apenas 1 linha ou for problemático
-    if len(df_sorted) > 0:
-        start_price_row = df_sorted.iloc[0]
-        end_price_row = df_sorted.iloc[-1]
-    else:
-        st.warning(f"Dados insuficientes para {product_name} para calcular métricas.")
+    if len(df_sorted) < 2: # Precisa de pelo menos 2 pontos para calcular variação
+        st.warning(f"Dados insuficientes para {product_name} para calcular variação (apenas {len(df_sorted)} ponto(s)).")
+        st.metric(label=f"Preço Atual ({product_name})", value=f"R$ {df_sorted.iloc[-1]['price']:.2f} / {product_unit}")
         return
 
-    start_price = start_price_row.get('price')
-    end_price = end_price_row.get('price')
+    start_price_row = df_sorted.iloc[0]
+    end_price_row = df_sorted.iloc[-1]
+
+    start_price_brl = start_price_row.get('price')
+    end_price_brl = end_price_row.get('price')
     
-    # Adiciona a lógica para preços em USD se aplicável
     start_price_usd = start_price_row.get('price_usd')
     end_price_usd = end_price_row.get('price_usd')
 
+    # Calcula variação percentual BRL
     percentage_change_brl = 0.0
-    if start_price is not None and pd.notna(start_price) and start_price != 0:
-        percentage_change_brl = ((end_price - start_price) / start_price) * 100
+    if pd.notna(start_price_brl) and start_price_brl != 0:
+        percentage_change_brl = ((end_price_brl - start_price_brl) / start_price_brl) * 100
     
+    # Calcula variação percentual USD (se disponível)
     percentage_change_usd = 0.0
-    if start_price_usd is not None and pd.notna(start_price_usd) and start_price_usd != 0:
+    if pd.notna(start_price_usd) and start_price_usd != 0:
         percentage_change_usd = ((end_price_usd - start_price_usd) / start_price_usd) * 100
-
-    # Define a direção do delta para a métrica BRL
-    delta_color_brl = "off"
-    if percentage_change_brl > 0:
-        delta_color_brl = "inverse" # Verde para alta
-    elif percentage_change_brl < 0:
-        delta_color_brl = "normal"  # Vermelho para baixa
-
-    # Define a direção do delta para a métrica USD (se existir)
-    delta_color_usd = "off"
-    if percentage_change_usd > 0:
-        delta_color_usd = "inverse" # Verde para alta
-    elif percentage_change_usd < 0:
-        delta_color_usd = "normal"  # Vermelho para baixa
-
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric(label=f"Preço Atual (BRL)", value=f"R$ {end_price:.2f}" if end_price is not None else "N/A")
+        st.metric(label=f"Preço Atual (BRL)", value=f"R$ {end_price_brl:.2f} / {product_unit}" if pd.notna(end_price_brl) else "N/A")
     with col2:
-        st.metric(label=f"Preço Inicial (BRL)", value=f"R$ {start_price:.2f}" if start_price is not None else "N/A")
+        st.metric(label=f"Preço Inicial (BRL)", value=f"R$ {start_price_brl:.2f} / {product_unit}" if pd.notna(start_price_brl) else "N/A")
     with col3:
         st.metric(
             label=f"Variação % (BRL)",
             value=f"{percentage_change_brl:.2f}%",
             delta=f"{percentage_change_brl:.2f}%" if percentage_change_brl != 0 else None,
-            delta_color=delta_color_brl
+            delta_color="inverse" if percentage_change_brl > 0 else ("normal" if percentage_change_brl < 0 else "off")
         )
     
-    # Exibe métricas USD se o produto tiver preço em USD
-    if start_price_usd is not None and end_price_usd is not None:
+    # Exibe métricas USD se o produto tiver preço em USD válido
+    if pd.notna(start_price_usd) and pd.notna(end_price_usd):
         col4, col5, col6 = st.columns(3)
         with col4:
-            st.metric(label=f"Preço Atual (USD)", value=f"US$ {end_price_usd:.2f}" if end_price_usd is not None else "N/A")
+            st.metric(label=f"Preço Atual (USD)", value=f"US$ {end_price_usd:.2f} / {product_unit}" if pd.notna(end_price_usd) else "N/A")
         with col5:
-            st.metric(label=f"Preço Inicial (USD)", value=f"US$ {start_price_usd:.2f}" if start_price_usd is not None else "N/A")
+            st.metric(label=f"Preço Inicial (USD)", value=f"US$ {start_price_usd:.2f} / {product_unit}" if pd.notna(start_price_usd) else "N/A")
         with col6:
             st.metric(
                 label=f"Variação % (USD)",
                 value=f"{percentage_change_usd:.2f}%",
                 delta=f"{percentage_change_usd:.2f}%" if percentage_change_usd != 0 else None,
-                delta_color=delta_color_usd
+                delta_color="inverse" if percentage_change_usd > 0 else ("normal" if percentage_change_usd < 0 else "off")
             )
 
 
@@ -181,11 +164,10 @@ def main():
     with st.sidebar:
         st.header("🔍 Filtros")
         
-        with st.spinner("Carregando lista de produtos..."):
-            products = load_products_safe()
-        
+        products = load_products_safe() # Já tem spinner dentro do get_processed_data_safe
+
         if not products:
-            st.error("Não foi possível carregar a lista de produtos. O aplicativo não pode continuar.")
+            # load_products_safe já exibe um erro, então só retorna aqui
             return
             
         selected_product_names = st.multiselect(
@@ -195,18 +177,17 @@ def main():
         )
         
         today = datetime.now().date() # Usar .date() para comparar com st.date_input
-        # Ajusta a data inicial para garantir que não seja após a data final padrão
-        default_start_date = today - timedelta(days=365)
+        default_start_date = today - timedelta(days=365) # Padrão de 1 ano
         
         start_date = st.date_input(
             "Data inicial",
             value=default_start_date,
-            max_value=today
+            max_value=today # Não permite datas futuras
         )
         end_date = st.date_input(
             "Data final",
             value=today,
-            max_value=today
+            max_value=today # Não permite datas futuras
         )
         
         analysis_type = st.selectbox(
@@ -215,26 +196,28 @@ def main():
         )
 
     if not selected_product_names:
-        st.warning("Selecione pelo menos um produto para iniciar a análise.")
+        st.info("Selecione um ou mais produtos no menu lateral para iniciar a análise.")
         return
         
     if start_date > end_date:
-        st.error("A 'Data inicial' não pode ser posterior à 'Data final'. Ajuste as datas.")
+        st.error("A 'Data inicial' não pode ser posterior à 'Data final'. Por favor, ajuste as datas.")
         return
         
     dfs = []
-    product_name_to_code_map = {p['name']: p['code'] for p in products}
+    # Cria um mapa de nome do produto para suas informações completas (incluindo unit e code)
+    product_name_to_info_map = {p['name']: p for p in products}
 
     for product_name in selected_product_names:
-        product_code = product_name_to_code_map.get(product_name)
-        if product_code:
+        product_info = product_name_to_info_map.get(product_name)
+        if product_info:
+            product_code = product_info['code']
             df = get_processed_data_safe(product_code, start_date, end_date)
             if not df.empty:
-                dfs.append((product_name, df))
+                dfs.append((product_name, df, product_info['unit'])) # Adiciona a unidade para exibição
             else:
                 st.warning(f"Nenhum dado válido encontrado para '{product_name}' no período selecionado. Tente ajustar as datas.")
         else:
-            st.error(f"Código do produto não encontrado para '{product_name}'.")
+            st.error(f"Informações do produto não encontradas para '{product_name}'.")
     
     if not dfs:
         st.error("Nenhum dado válido foi carregado para os filtros selecionados. Por favor, verifique sua conexão ou tente outros produtos/datas.")
@@ -243,9 +226,9 @@ def main():
     # --- Apresentação dos resultados baseada no tipo de análise ---
     
     if analysis_type == "Histórico":
-        for name, df in dfs:
+        for name, df, unit in dfs:
             st.subheader(f"📈 {name} - Análise Histórica")
-            display_product_metrics(name, df) # Exibe os cartões de métricas
+            display_product_metrics(name, df, unit) # Passa a unidade para a função de métricas
             st.plotly_chart(
                 Visualizer.create_historical_plot(df, name),
                 use_container_width=True
@@ -253,17 +236,15 @@ def main():
             
     elif analysis_type == "Sazonal":
         if not has_full_functionality:
-            st.error("Análise sazonal requer o pacote `statsmodels`. Instale com: `pip install statsmodels`")
+            st.error("A Análise Sazonal requer o pacote `statsmodels`. Instale com: `pip install statsmodels`")
         else:
-            # Usa st.container para melhor organização visual quando há várias colunas
             st.subheader("📊 Análise Sazonal")
-            cols = st.columns(len(dfs)) 
-            for i, (name, df) in enumerate(dfs):
+            cols = st.columns(len(dfs)) # Cria colunas dinamicamente para os gráficos
+            for i, (name, df, unit) in enumerate(dfs):
                 with cols[i]:
                     st.markdown(f"**{name}**")
                     try:
-                        # Para análise sazonal, é comum precisar de um período mais longo (e.g., 2 anos de dados diários)
-                        if len(df) < 730: # Aproximadamente 2 anos de dados diários
+                        if len(df) < 730: # Aproximadamente 2 anos de dados diários para decomposição
                             st.warning(f"{name}: São necessários pelo menos 730 dias de dados para uma análise sazonal significativa. Dados atuais: {len(df)} dias.")
                             continue
                         st.plotly_chart(
@@ -275,11 +256,15 @@ def main():
             
     elif analysis_type == "Comparativo":
         if len(dfs) > 1:
-            st.subheader("🔗 Análise Comparativa de Produtos")
+            st.subheader("🔗 Análise Comparativa de Preços")
+            # Extrai apenas os DataFrames e nomes para a função de comparação
+            comparison_dfs = [df for name, df, unit in dfs]
+            comparison_names = [name for name, df, unit in dfs]
+
             st.plotly_chart(
                 Visualizer.create_correlation_plot(
-                    [df for _, df in dfs],
-                    [name for name, _ in dfs]
+                    comparison_dfs,
+                    comparison_names
                 ),
                 use_container_width=True
             )
@@ -288,7 +273,7 @@ def main():
             
     # --- Expander para ver os dados completos ---
     with st.expander("📝 Ver dados completos"):
-        for name, df in dfs:
+        for name, df, unit in dfs:
             st.subheader(f"Dados de {name}")
             st.dataframe(df)
 

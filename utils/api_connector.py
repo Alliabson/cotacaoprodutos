@@ -289,7 +289,7 @@ def _scrape_cepea_data(self, product_code, start_date, end_date):
         
     return pd.DataFrame()
 
-    def get_historical_prices(self, product_code, start_date, end_date):
+     def get_historical_prices(self, product_code, start_date, end_date):
         """Obtém preços históricos com tratamento de moeda e cache."""
         try:
             cache_path = self._get_cache_path(product_code, start_date, end_date)
@@ -348,7 +348,7 @@ def _scrape_cepea_data(self, product_code, start_date, end_date):
             
             self._save_to_cache(df, cache_path)
             return df
-            
-        except Exception as e:
-            print(f"Erro geral ao obter dados históricos para {product_code}: {e}")
-            return pd.DataFrame()
+                        
+                    except Exception as e:
+                        print(f"Erro geral ao obter dados históricos para {product_code}: {e}")
+                        return pd.DataFrame()

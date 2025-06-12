@@ -22,14 +22,15 @@ class CepeaAPI:
         # Mapeamento do nome do produto na URL, do ID do indicador e da moeda.
         # ESSA É A PARTE MAIS CRÍTICA QUE VOCÊ PRECISA CONFERIR NO SITE DO CEPEA!
         # Vá em cada indicador no site do CEPEA, clique em "Série de Preços" e verifique a URL e o id_indicador.
+        # As URLs e IDs aqui são as que funcionaram em testes recentes, mas podem mudar.
         self.product_info_map = {
             "BGI": {"url_name": "boi-gordo", "id_indicador": "2", "currency": "BRL"},
             "MIL": {"url_name": "milho", "id_indicador": "7", "currency": "BRL"},
             "SOJ": {"url_name": "soja", "id_indicador": "14", "currency": "BRL"},
-            "CAF": {"url_name": "cafe", "id_indicador": "4", "currency": "USD"}, # Café Arábica (geralmente cotado em USD)
-            "SUC": {"url_name": "acucar", "id_indicador": "1", "currency": "BRL"} # Açúcar Cristal (verificar se a série 1 é BRL, pode haver outra para USD)
-            # Exemplo de como adicionar mais produtos:
-            # "TRIGO": {"url_name": "trigo", "id_indicador": "X", "currency": "BRL"},
+            "CAF": {"url_name": "cafe", "id_indicador": "4", "currency": "USD"}, # Café Arábica (geralmente cotado em USD no CEPEA)
+            "SUC": {"url_name": "acucar", "id_indicador": "1", "currency": "BRL"} # Açúcar Cristal (id_indicador 1 é geralmente BRL, confira no site)
+            # Para outros produtos, adicione aqui, ex:
+            # "TRIGO": {"url_name": "trigo", "id_indicador": "ID_CORRETO_DO_SITE", "currency": "BRL"},
         }
 
     def _get_cache_path(self, product_code, start_date, end_date):
@@ -68,10 +69,9 @@ class CepeaAPI:
                 # Retorna a cotação de compra (cotacaoCompra) que é mais relevante para o preço de produtos
                 return float(data['value'][0]['cotacaoCompra'])
             else:
-                # print(f"Aviso: Nenhuma cotação de dólar encontrada para a data {date_str}. Usando fallback.")
                 return 5.0 # Valor fallback se a API não retornar dados
         except Exception as e:
-            # print(f"Erro ao obter taxa de câmbio para {date.strftime('%Y-%m-%d')}: {e}. Usando fallback.")
+            # print(f"Erro ao obter taxa de câmbio para {date.strftime('%Y-%m-%d')}: {e}. Usando fallback.") # Descomente para depurar
             return 5.0  # Valor fallback
 
     def get_available_products(self):
@@ -122,7 +122,7 @@ class CepeaAPI:
         """
         product_info = self.product_info_map.get(product_code)
         if not product_info:
-            print(f"ERRO: Informações de URL/ID para o produto {product_code} não configuradas em product_info_map.")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ERRO: Informações de URL/ID para o produto {product_code} não configuradas em product_info_map.")
             return pd.DataFrame()
 
         url_name = product_info["url_name"]
@@ -131,7 +131,7 @@ class CepeaAPI:
         # A URL para a série de preços histórica com filtro por indicador
         url_to_scrape = f"{self.base_url_cotacoes}{url_name}.aspx?id_indicador={id_indicador}"
         
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Tentando scraping de: {url_to_scrape} para {product_code}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Iniciando scraping para {product_code} na URL: {url_to_scrape}")
 
         try:
             # Adiciona headers para simular um navegador e evitar bloqueios
@@ -144,23 +144,31 @@ class CepeaAPI:
             }
             response = requests.get(url_to_scrape, timeout=20, headers=headers) # Aumenta o timeout
             response.raise_for_status() # Lança exceção para status 4xx/5xx
+            
+            # --- PRINTS PARA DEPURAR O CONTEÚDO BRUTO ---
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Status da requisição: {response.status_code}")
+            # Descomente a linha abaixo PARA VER O HTML COMPLETO (PODE SER MUITO GRANDE!)
+            # with open(f"debug_html_{product_code}.html", "w", encoding="utf-8") as f:
+            #     f.write(response.text)
+            # print(f"[{datetime.now().strftime('%H:%M:%S')}] HTML salvo em debug_html_{product_code}.html para inspeção.")
+            # print(f"[{datetime.now().strftime('%H:%M:%S')}] Primeiros 500 caracteres do HTML recebido:\n{response.text[:500]}")
+            # ---------------------------------------------
 
-            # Critérios para encontrar a tabela certa:
-            # Ela deve conter colunas como 'Data', 'VALOR R$*', 'VAR./DIA', 'VAR./MÊS', 'VALOR US$*'
-            # O 'match' regex ajuda a ser mais flexível com variações nos nomes das colunas
-            table_match_regex = r'Data|VALOR R\$|\bÀ Vista\b|\bPreço à vista\b|\bVALOR US\$|\bVAR\./'
+            # Regex para encontrar cabeçalhos de colunas relevantes
+            table_match_regex = r'Data|VALOR R\$|\bÀ Vista\b|\bPreço à vista\b|\bVALOR US\$|\bVAR\./|\bPreço'
             
             target_df = pd.DataFrame()
             try:
                 # Tenta ler todas as tabelas que correspondem ao regex nos cabeçalhos
                 dfs = pd.read_html(response.text, decimal=',', thousands='.', flavor='bs4', match=table_match_regex)
                 
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] pd.read_html encontrou {len(dfs)} tabelas que correspondem ao regex.")
+                
                 # Percorre os DataFrames encontrados e tenta identificar o correto
                 for df_candidate in dfs:
                     # Verifique se o DataFrame candidato tem as colunas esperadas para o histórico
-                    # As colunas mais confiáveis são "Data" e pelo menos uma coluna de valor (R$ ou US$)
                     has_date_col = any(re.search(r'data', str(col), re.IGNORECASE) for col in df_candidate.columns)
-                    has_price_col_brl = any(re.search(r'VALOR R\$|\bÀ Vista\b|\bPreço à vista\b', str(col), re.IGNORECASE) for col in df_candidate.columns)
+                    has_price_col_brl = any(re.search(r'VALOR R\$|\bÀ Vista\b|\bPreço à vista\b|\bPreço', str(col), re.IGNORECASE) for col in df_candidate.columns)
                     has_price_col_usd = any(re.search(r'VALOR US\$', str(col), re.IGNORECASE) for col in df_candidate.columns)
                     
                     if has_date_col and (has_price_col_brl or has_price_col_usd):
@@ -169,7 +177,7 @@ class CepeaAPI:
                         break
                 
                 if target_df.empty:
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] AVISO: Nenhuma tabela relevante encontrada por pd.read_html para {product_code} na URL {url_to_scrape}.")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] AVISO: Nenhuma tabela relevante encontrada por pd.read_html. Tentando BeautifulSoup diretamente...")
                     # Fallback para buscar com BeautifulSoup se pd.read_html não encontrar
                     soup = BeautifulSoup(response.text, 'html.parser')
                     table_element = soup.find('table', class_='tabela-indicador') # Tenta classe comum do CEPEA
@@ -180,12 +188,12 @@ class CepeaAPI:
                     if table_element:
                         # Converte a tabela BeautifulSoup para DataFrame
                         rows = []
-                        # Pega os cabeçalhos primeiro (se houver thead)
+                        # Pega os cabeçalhos (idealmente de thead)
                         headers_th = [th.text.strip() for th in table_element.find('thead').find_all('th')] if table_element.find('thead') else []
                         if not headers_th: # Se não achou thead, tenta pegar de tr/th na primeira linha
                             first_row = table_element.find('tr')
                             if first_row:
-                                headers_th = [th.text.strip() for th in first_row.find_all(['th', 'td'])] # Pega td ou th na primeira linha
+                                headers_th = [th.text.strip() for th in first_row.find_all(['th', 'td'])]
                         
                         # Pega as linhas de dados (tbody, ou todas as tr se não houver tbody)
                         data_rows = table_element.find('tbody').find_all('tr') if table_element.find('tbody') else table_element.find_all('tr')[1:] # Ignora primeira linha se headers_th for do tr
@@ -195,20 +203,15 @@ class CepeaAPI:
                             if cells: # Garante que a linha não está vazia
                                 rows.append(cells)
                         
-                        if headers_th and rows:
-                            # Garante que o número de colunas bate com o cabeçalho
-                            if len(rows[0]) == len(headers_th): # Basic check
-                                target_df = pd.DataFrame(rows, columns=headers_th)
-                                print(f"[{datetime.now().strftime('%H:%M:%S')}] Tabela encontrada com BeautifulSoup e convertida.")
-                            else:
-                                print(f"[{datetime.now().strftime('%H:%M:%S')}] AVISO: Tabela encontrada com BS4, mas colunas não batem com cabeçalhos. Tentando sem cabeçalho.")
-                                target_df = pd.DataFrame(rows) # Tenta sem cabeçalho, para mapear por índice depois
-                        elif rows and not headers_th:
-                             print(f"[{datetime.now().strftime('%H:%M:%S')}] AVISO: Tabela encontrada com BS4, mas sem cabeçalhos. Usando primeira linha como cabeçalho ou sem.")
-                             if len(rows) > 1:
-                                 target_df = pd.DataFrame(rows[1:], columns=rows[0]) # Assume primeira linha é cabeçalho
-                             else:
-                                 target_df = pd.DataFrame(rows)
+                        if headers_th and rows and len(rows[0]) == len(headers_th):
+                            target_df = pd.DataFrame(rows, columns=headers_th)
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}] Tabela encontrada com BeautifulSoup e convertida usando cabeçalhos.")
+                        elif rows and not headers_th and len(rows) > 1: # Tenta usar a primeira linha como cabeçalho se não achou thead/th
+                             target_df = pd.DataFrame(rows[1:], columns=rows[0])
+                             print(f"[{datetime.now().strftime('%H:%M:%S')}] Tabela encontrada com BeautifulSoup, usando primeira linha como cabeçalho.")
+                        elif rows: # Se só tem linhas e nenhum cabeçalho claro
+                            target_df = pd.DataFrame(rows)
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}] Tabela encontrada com BeautifulSoup, sem cabeçalhos explícitos.")
                         else:
                             print(f"[{datetime.now().strftime('%H:%M:%S')}] AVISO: Tabela encontrada com BeautifulSoup, mas sem linhas ou cabeçalhos válidos.")
                             return pd.DataFrame()
@@ -217,7 +220,7 @@ class CepeaAPI:
                         return pd.DataFrame()
 
             except Exception as pd_html_err:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] ERRO ao tentar pd.read_html para {product_code}: {pd_html_err}")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ERRO ao tentar ler HTML com pandas/BeautifulSoup para {product_code}: {pd_html_err}")
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Conteúdo HTML para depuração (primeiros 1000 caracteres):\n{response.text[:1000]}")
                 return pd.DataFrame()
 
@@ -264,12 +267,12 @@ class CepeaAPI:
                     df_temp[col_name] = pd.to_numeric(df_temp[col_name], errors='coerce')
                    
             # Remove linhas com valores nulos nos preços que são cruciais
-            if 'price' in df_temp.columns:
+            if 'price' in df_temp.columns and not df_temp['price'].isnull().all():
                 df_temp.dropna(subset=['price'], inplace=True)
-            elif 'price_usd_scraped' in df_temp.columns:
+            elif 'price_usd_scraped' in df_temp.columns and not df_temp['price_usd_scraped'].isnull().all():
                 df_temp.dropna(subset=['price_usd_scraped'], inplace=True)
             else:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] ERRO: Nenhuma coluna de preço válida (R$ ou US$) encontrada após limpeza para {product_code}.")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ERRO: Nenhuma coluna de preço válida (R$ ou US$) encontrada após limpeza e conversão para {product_code}.")
                 return pd.DataFrame()
 
 
@@ -293,7 +296,7 @@ class CepeaAPI:
                 
                 df_final = df_temp[final_cols_to_keep].copy()
                 
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Scraping para {product_code} concluído. {len(df_final)} registros.")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Scraping para {product_code} concluído. {len(df_final)} registros. Amostra de Preços (BRL): {df_final['price'].head().tolist()}")
                 return df_final
             else:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] AVISO: DataFrame vazio após filtro de datas para {product_code}.")
@@ -317,7 +320,7 @@ class CepeaAPI:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Retornando dados do cache para {product_code}")
                 # Reverifica e recalcula price_usd se o cache estiver incompleto para produtos USD
                 product_currency_type = self.product_info_map.get(product_code, {}).get('currency')
-                if product_currency_type == "USD" and 'price_usd' not in cached_data.columns or cached_data['price_usd'].isnull().all():
+                if product_currency_type == "USD" and ('price_usd' not in cached_data.columns or cached_data['price_usd'].isnull().all()):
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] AVISO: Cache de {product_code} (USD) incompleto. Recalculando USD.")
                     # Assume que 'price' no cache para produtos USD seria o BRL
                     cached_data['exchange_rate'] = cached_data['date'].apply(lambda x: self._get_exchange_rate(x.date()))

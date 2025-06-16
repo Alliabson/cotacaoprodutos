@@ -2,6 +2,15 @@ import pandas as pd
 import numpy as np
 
 class DataProcessor:
+    # O método _convert_to_brl não é mais necessário aqui, pois a conversão é feita no api_connector
+    # @staticmethod
+    # def _convert_to_brl(df):
+    #     """Garante que todos os valores monetários estão em BRL"""
+    #     if 'price_usd' in df.columns and 'exchange_rate' in df.columns:
+    #         # Já assume que price_usd é o preço em USD e price é o preço em BRL
+    #         # df['price_brl'] = df['price']  # Salva original (agora 'price' já é BRL)
+    #         # df['price'] = df['price_usd'] * df['exchange_rate']
+    #     return df
         
     @staticmethod
     def add_moving_averages(df, window_sizes=[7, 30, 90]):
